@@ -706,6 +706,12 @@ function startBot() {
     _env.NODE_OPTIONS = (`${_prev} --import file:///tmp/_bfx_preload.mjs`).trim();
   }
 
+  // Auto-set PHONE_NUMBER from OWNER_NUMBER so the inner bot can generate
+  // a pairing code without needing interactive stdin input.
+  if (!_env.PHONE_NUMBER && _env.OWNER_NUMBER) {
+    _env.PHONE_NUMBER = _env.OWNER_NUMBER.replace(/[^0-9]/g, '');
+  }
+
   const bot = spawn('node', nodeArgs, {
     cwd:   botDir,
     stdio: 'inherit',
@@ -713,10 +719,10 @@ function startBot() {
   });
 
   bot.on('close', (code) => {
-    if (code !== 0 && code !== null) {
-      warn(`Bot exited (code ${code}). Restarting in 3s...`);
-      setTimeout(() => startBot(), 3000);
-    }
+    // Restart on any exit — code 0 means the inner bot exited cleanly
+    // (e.g. no session/stdin issue) but we still want it back up.
+    warn(`Bot exited (code ${code ?? 'null'}). Restarting in 5s...`);
+    setTimeout(() => startBot(), 5000);
   });
 
   bot.on('error', (e) => {
