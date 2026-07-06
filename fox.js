@@ -711,7 +711,6 @@ function startBot() {
   if (!_env.PHONE_NUMBER && _env.OWNER_NUMBER) {
     _env.PHONE_NUMBER = _env.OWNER_NUMBER.replace(/[^0-9]/g, '');
   }
-  process.stderr.write(`\n[FOXY-LOAD] PHONE setup: OWNER_NUMBER=${(_env.OWNER_NUMBER||'').replace(/[^0-9]/g,'').length}d, PHONE_NUMBER=${(_env.PHONE_NUMBER||'').length >= 10 ? 'ready' : 'not-set/invalid'}\n`);
 
   const bot = spawn('node', nodeArgs, {
     cwd:   botDir,
