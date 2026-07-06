@@ -667,7 +667,26 @@ async function applyLocalSettings() {
 }
 
 // === BOT LAUNCHER ===
+// Exponential-backoff restart state — shared across all restarts in this process.
+const _restartState = { attempts: 0, lastStart: 0 };
+const _RESTART_BASE_MS  = 5000;   // 5s minimum delay
+const _RESTART_MAX_MS   = 60000;  // 60s ceiling
+const _RESTART_WINDOW   = 30000;  // window for rapid-exit detection
+
+function _nextRestartDelay() {
+  const now = Date.now();
+  const rapidExit = (now - _restartState.lastStart) < _RESTART_WINDOW;
+  if (rapidExit) {
+    _restartState.attempts++;
+  } else {
+    _restartState.attempts = 0; // reset on clean/long run
+  }
+  return Math.min(_RESTART_BASE_MS * Math.pow(2, _restartState.attempts), _RESTART_MAX_MS);
+}
+
 function startBot() {
+  _restartState.lastStart = Date.now();
+
   let botDir = fs.existsSync(EXTRACT_DIR) ? EXTRACT_DIR : null;
 
   if (!botDir) {
@@ -708,8 +727,38 @@ function startBot() {
 
   // Auto-set PHONE_NUMBER from OWNER_NUMBER so the inner bot can generate
   // a pairing code without needing interactive stdin input.
+  // Only set it if the stripped value looks like a real E.164 number (8-15 digits).
   if (!_env.PHONE_NUMBER && _env.OWNER_NUMBER) {
-    _env.PHONE_NUMBER = _env.OWNER_NUMBER.replace(/[^0-9]/g, '');
+    const digits = _env.OWNER_NUMBER.replace(/[^0-9]/g, '');
+    if (digits.length >= 8 && digits.length <= 15) {
+      _env.PHONE_NUMBER = digits;
+      ok(`Auto-pairing mode — PHONE_NUMBER set from OWNER_NUMBER (${digits.length} digits)`);
+    } else {
+      warn(
+        `OWNER_NUMBER has ${digits.length} digit(s) — not a valid phone number.\n` +
+        `  Set OWNER_NUMBER to your WhatsApp number (digits only, country code first)\n` +
+        `  to enable auto-pairing. Example: 254712345678`
+      );
+    }
+  }
+
+  // Startup diagnostic so operators can see which login path will be taken.
+  const _hasSession = (() => {
+    try {
+      const c = fs.readFileSync(path.join(botDir, 'session', 'creds.json'), 'utf8');
+      const p = JSON.parse(c);
+      return !!(p && (p.noiseKey || p.signedIdentityKey));
+    } catch { return false; }
+  })();
+  const _hasSessionId  = !!(_env.SESSION_ID  && _env.SESSION_ID.trim());
+  const _hasPhoneNum   = !!(_env.PHONE_NUMBER && _env.PHONE_NUMBER.length >= 8);
+
+  if (_hasSession || _hasSessionId) {
+    ok('Login mode → session (existing credentials)');
+  } else if (_hasPhoneNum) {
+    ok(`Login mode → auto-pair (phone ${_env.PHONE_NUMBER.slice(0,4)}****)`);
+  } else {
+    warn('Login mode → interactive menu (no session or PHONE_NUMBER set).\n  On headless platforms type "1" + Enter in the console, then your number.');
   }
 
   const bot = spawn('node', nodeArgs, {
@@ -719,15 +768,17 @@ function startBot() {
   });
 
   bot.on('close', (code) => {
-    // Restart on any exit — code 0 means the inner bot exited cleanly
-    // (e.g. no session/stdin issue) but we still want it back up.
-    warn(`Bot exited (code ${code ?? 'null'}). Restarting in 5s...`);
-    setTimeout(() => startBot(), 5000);
+    // Restart on any exit — code 0 on headless platforms (e.g. Pterodactyl)
+    // means stdin closed before the bot finished logging in; we still restart.
+    const delay = _nextRestartDelay();
+    warn(`Bot exited (code ${code ?? 'null'}). Restarting in ${delay / 1000}s... (attempt #${_restartState.attempts + 1})`);
+    setTimeout(() => startBot(), delay);
   });
 
   bot.on('error', (e) => {
     err(`Failed to start: ${e.message}`);
-    setTimeout(() => startBot(), 3000);
+    const delay = _nextRestartDelay();
+    setTimeout(() => startBot(), delay);
   });
 }
 
