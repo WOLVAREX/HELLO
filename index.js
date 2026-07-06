@@ -130,3 +130,11 @@ function patchSpawn() {
 }
 
 module.exports = { printBanner, backupSettings, restoreSettings, fixBaileys, patchSpawn };
+
+// Entry point — allows running directly via `node index.js` (e.g. Pterodactyl panel)
+if (require.main === module) {
+  import('./fox.js').catch((err) => {
+    process.stderr.write('\x1b[31m[FOXY] Failed to start: ' + err.message + '\x1b[0m\n');
+    process.exit(1);
+  });
+}

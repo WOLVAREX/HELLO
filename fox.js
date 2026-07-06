@@ -200,13 +200,13 @@ async function fetchRepoUrl() {
       // Handle array format: [{ "repo": "url" }]
       if (Array.isArray(data) && data.length > 0 && data[0] && data[0].repo) {
         const url = data[0].repo;
-        step('✅', 'Repo URL found', url);
+        step('✅', 'Core located', 'ready to download');
         return url;
       }
       // Handle object format: { "repo": "url" }
       if (data && data.repo) {
         const url = data.repo;
-        step('✅', 'Repo URL found', url);
+        step('✅', 'Core located', 'ready to download');
         return url;
       }
     } catch (_) {
@@ -219,7 +219,7 @@ async function fetchRepoUrl() {
     const match = jsonData.match(/"repo"\s*:\s*"([^"]+)"/);
     if (match && match[1]) {
       const url = match[1];
-      step('✅', 'Repo URL found', `${url} (recovered from malformed JSON)`);
+      step('✅', 'Core located', 'ready to download');
       return url;
     }
 
@@ -252,7 +252,7 @@ async function downloadAndExtract() {
   const zipPath = path.join(TEMP_DIR, 'bundle.zip');
 
   const repoUrl = await fetchRepoUrl();
-  step('📥', 'Downloading', repoUrl);
+  step('📥', 'Downloading', 'core package...');
   await nativeDownload(repoUrl, zipPath, { headers: { 'User-Agent': 'foxy-fetcher/1.0' } });
 
   const stat = fs.statSync(zipPath);
