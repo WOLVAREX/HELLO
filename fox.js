@@ -761,15 +761,38 @@ function startBot() {
     warn('Login mode → interactive menu (no session or PHONE_NUMBER set).\n  On headless platforms type "1" + Enter in the console, then your number.');
   }
 
+  // On headless platforms (no TTY — e.g. Pterodactyl Docker containers):
+  //   stdin is a closed/non-interactive pipe.  If we inherit it directly, the
+  //   inner bot's readline gets EOF, its promise never resolves, the event loop
+  //   drains, and the process exits 0.  Pterodactyl then sees the HTTP port drop
+  //   and force-kills the container before fox.js can restart.
+  //
+  //   Fix: give the inner bot its OWN stdin pipe.  Forward anything the user
+  //   types in the panel console to it, but with { end: false } so that when
+  //   the container's stdin closes we do NOT forward EOF — the inner bot's
+  //   readline stays open indefinitely until the user provides input.
+  const _headless = !process.stdin.isTTY;
+  const _stdinMode = _headless ? 'pipe' : 'inherit';
+
   const bot = spawn('node', nodeArgs, {
     cwd:   botDir,
-    stdio: 'inherit',
+    stdio: [_stdinMode, 'inherit', 'inherit'],
     env:   _env,
   });
+
+  if (_headless && bot.stdin) {
+    // Forward console input → inner bot without propagating EOF.
+    process.stdin.pipe(bot.stdin, { end: false });
+    // If the inner bot's stdin closes unexpectedly, swallow the error.
+    bot.stdin.on('error', () => {});
+  }
 
   bot.on('close', (code) => {
     // Restart on any exit — code 0 on headless platforms (e.g. Pterodactyl)
     // means stdin closed before the bot finished logging in; we still restart.
+    if (_headless && bot.stdin) {
+      try { process.stdin.unpipe(bot.stdin); } catch {}
+    }
     const delay = _nextRestartDelay();
     warn(`Bot exited (code ${code ?? 'null'}). Restarting in ${delay / 1000}s... (attempt #${_restartState.attempts + 1})`);
     setTimeout(() => startBot(), delay);
@@ -777,9 +800,19 @@ function startBot() {
 
   bot.on('error', (e) => {
     err(`Failed to start: ${e.message}`);
+    if (_headless && bot.stdin) {
+      try { process.stdin.unpipe(bot.stdin); } catch {}
+    }
     const delay = _nextRestartDelay();
     setTimeout(() => startBot(), delay);
   });
+}
+
+// Keep fox.js alive between restarts on headless platforms.
+// A bare setInterval with no-op ensures the Node event loop never drains
+// even if all other handles (child process, pending timers) briefly go idle.
+if (!process.stdin.isTTY) {
+  setInterval(() => {}, 30000);
 }
 
 // === ENTRY POINT ===
